@@ -85,6 +85,55 @@ export function geometry(lm: Landmark[], m: Mask): Geometry | null {
   return { width: m.width, height: m.height, headTopY, groundY, bodyHeightPx, pxPerCm: (h) => bodyHeightPx / h };
 }
 
+export interface Frame {
+  width: number;
+  height: number;
+}
+
+/**
+ * Geometry without a silhouette mask: the nose sits at ~93.5% of standing height, so the
+ * head top is extrapolated from nose and heels. Less accurate than the mask version.
+ */
+export function geometryFromLandmarks(lm: Landmark[], frame: Frame): Geometry | null {
+  const nose = lm[LM.nose];
+  const heels = [lm[LM.lHeel], lm[LM.rHeel]].filter((l): l is Landmark => !!l);
+  if (!nose || heels.length === 0) return null;
+  const groundY = (heels.reduce((a, l) => a + l.y, 0) / heels.length) * frame.height;
+  const noseY = nose.y * frame.height;
+  const bodyHeightPx = (groundY - noseY) / 0.935;
+  if (bodyHeightPx <= 0) return null;
+  return {
+    width: frame.width,
+    height: frame.height,
+    headTopY: groundY - bodyHeightPx,
+    groundY,
+    bodyHeightPx,
+    pxPerCm: (h) => bodyHeightPx / h,
+  };
+}
+
+/** Measures available from pose landmarks alone (no torso widths). */
+export function extractLandmarkMeasures(lm: Landmark[], frame: Frame, heightCm: number): FrontalMeasures | null {
+  const g = geometryFromLandmarks(lm, frame);
+  const ls = lm[LM.lShoulder];
+  const rs = lm[LM.rShoulder];
+  if (!g || !ls || !rs) return null;
+  const scale = g.pxPerCm(heightCm);
+  const arm = (a: number, b: number, c: number) => {
+    const [pa, pb, pc] = [lm[a], lm[b], lm[c]];
+    if (!pa || !pb || !pc) return null;
+    return (dist(px(pa, g.width, g.height), px(pb, g.width, g.height)) + dist(px(pb, g.width, g.height), px(pc, g.width, g.height))) / scale;
+  };
+  const arms = [arm(LM.lShoulder, LM.lElbow, LM.lWrist), arm(LM.rShoulder, LM.rElbow, LM.rWrist)].filter((v): v is number => v != null);
+  return {
+    shoulderWidthCm: dist(px(ls, g.width, g.height), px(rs, g.width, g.height)) / scale,
+    chestWidthCm: null,
+    waistWidthCm: null,
+    hipWidthCm: null,
+    armLengthCm: arms.length ? arms.reduce((a, v) => a + v, 0) / arms.length : null,
+  };
+}
+
 /** True when both arms are held away from the torso so silhouette widths are torso-only. */
 export function armsAway(lm: Landmark[], g: Geometry): boolean {
   const gap = 0.05 * g.bodyHeightPx;

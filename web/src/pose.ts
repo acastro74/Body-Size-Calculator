@@ -1,5 +1,5 @@
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
-import { extractFrontalMeasures, type Landmark, type Mask } from "./core/silhouette";
+import { extractFrontalMeasures, extractLandmarkMeasures, type Landmark, type Mask } from "./core/silhouette";
 import { assessPhoto, hasBlockingIssue, type PhotoIssue } from "./core/photoQuality";
 import type { FrontalMeasures } from "./core/bodyEstimate";
 
@@ -41,7 +41,7 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
 }
 
 type Delegate = "CPU" | "GPU";
-let cached: { delegate: Delegate; instance: Promise<PoseLandmarker> } | null = null;
+let cached: { key: string; delegate: Delegate; masks: boolean; instance: Promise<PoseLandmarker> } | null = null;
 
 async function loadModel(): Promise<Uint8Array> {
   const res = await fetch(MODEL_URL);
@@ -53,7 +53,7 @@ async function loadModel(): Promise<Uint8Array> {
   return bytes;
 }
 
-async function createLandmarker(delegate: Delegate): Promise<PoseLandmarker> {
+async function createLandmarker(delegate: Delegate, masks: boolean): Promise<PoseLandmarker> {
   let model: Uint8Array;
   try {
     model = await loadModel();
@@ -66,15 +66,16 @@ async function createLandmarker(delegate: Delegate): Promise<PoseLandmarker> {
       baseOptions: { modelAssetBuffer: model, delegate },
       runningMode: "IMAGE",
       numPoses: 1,
-      outputSegmentationMasks: true,
+      outputSegmentationMasks: masks,
     });
   } catch (e) {
     throw new PoseError(`engine-start/${delegate}`, e);
   }
 }
 
-function getLandmarker(delegate: Delegate): Promise<PoseLandmarker> {
-  if (cached?.delegate !== delegate) cached = { delegate, instance: createLandmarker(delegate) };
+function getLandmarker(delegate: Delegate, masks: boolean): Promise<PoseLandmarker> {
+  const key = `${delegate}/${masks}`;
+  if (cached?.key !== key) cached = { key, delegate, masks, instance: createLandmarker(delegate, masks) };
   const { instance } = cached;
   // Never keep a failed instance: the WASM runtime cannot be reused after an abort.
   instance.catch(() => {
@@ -83,8 +84,8 @@ function getLandmarker(delegate: Delegate): Promise<PoseLandmarker> {
   return instance;
 }
 
-function discard(delegate: Delegate) {
-  if (cached?.delegate === delegate) {
+function discard(delegate: Delegate, masks: boolean) {
+  if (cached?.key === `${delegate}/${masks}`) {
     cached.instance.then((p) => p.close()).catch(() => {});
     cached = null;
   }
@@ -123,43 +124,117 @@ export interface PhotoAnalysis {
   issues: PhotoIssue[];
   /** null when the photo was rejected */
   measures: FrontalMeasures | null;
+  /** `mask`: torso widths from the body silhouette. `landmarks`: pose points only (less precise). */
+  mode: "mask" | "landmarks";
+}
+
+export type Stage = "loading" | "analyzing" | "silhouette";
+
+/**
+ * The silhouette step is the heavy GPU-assisted part of the engine. If it ever crashes or
+ * freezes the tab, the flag is left at "pending"; on the next visit we skip it automatically.
+ * Override with ?mask=1 (force on) or ?mask=0 (force off).
+ */
+const MASK_FLAG = "bsc:mask";
+function flag(): string | null {
+  try {
+    return localStorage.getItem(MASK_FLAG);
+  } catch {
+    return null;
+  }
+}
+function setFlag(v: "pending" | "ok" | "off") {
+  try {
+    localStorage.setItem(MASK_FLAG, v);
+  } catch {
+    /* ignore */
+  }
+}
+export function maskEnabled(): boolean {
+  const q = new URLSearchParams(location.search).get("mask");
+  if (q === "0") return false;
+  if (q === "1") {
+    setFlag("ok");
+    return true;
+  }
+  const f = flag();
+  if (f === "pending") {
+    setFlag("off"); // the previous silhouette attempt never finished
+    return false;
+  }
+  return f !== "off";
+}
+
+/** Let the browser paint the progress message before a call that blocks the main thread. */
+const paint = () => new Promise<void>((r) => setTimeout(r, 60));
+
+function runDetect(pose: PoseLandmarker, canvas: HTMLCanvasElement) {
+  const result = pose.detect(canvas);
+  try {
+    const lm = result.landmarks[0] as Landmark[] | undefined;
+    const segmentation = result.segmentationMasks?.[0];
+    const mask: Mask | undefined = segmentation
+      ? { data: segmentation.getAsFloat32Array(), width: segmentation.width, height: segmentation.height }
+      : undefined;
+    return { lm, mask };
+  } finally {
+    result.close?.();
+  }
 }
 
 /** Runs entirely in the browser: the photo is never uploaded. */
 export async function analyzePhoto(
   file: File,
   heightCm: number,
-  onStage: (stage: "loading" | "analyzing") => void = () => {},
+  onStage: (stage: Stage) => void = () => {},
 ): Promise<PhotoAnalysis> {
   const canvas = await toCanvas(file);
-
-  // Try the CPU engine first, then the GPU one; the WASM runtime can abort on some browser/GPU setups.
+  const frame = { width: canvas.width, height: canvas.height };
   const errors: string[] = [];
+
+  // Phase 1: pose landmarks only (no silhouette) — the lightweight, reliable path.
+  let base: PhotoAnalysis | null = null;
   for (const delegate of ["CPU", "GPU"] as const) {
     try {
       onStage("loading");
-      const pose = await withTimeout(getLandmarker(delegate), START_TIMEOUT_MS[delegate], `engine-start/${delegate}`);
+      const pose = await withTimeout(getLandmarker(delegate, false), START_TIMEOUT_MS[delegate], `engine-start/${delegate}`);
       onStage("analyzing");
-      const result = pose.detect(canvas);
-      try {
-        const lm = result.landmarks[0] as Landmark[] | undefined;
-        const segmentation = result.segmentationMasks?.[0];
-        const mask: Mask | undefined = segmentation
-          ? { data: segmentation.getAsFloat32Array(), width: segmentation.width, height: segmentation.height }
-          : undefined;
-        const issues = assessPhoto(lm, mask);
-        if (hasBlockingIssue(issues) || !lm || !mask) return { issues, measures: null };
-        return { issues, measures: extractFrontalMeasures(lm, mask, heightCm) };
-      } finally {
-        result.close?.();
-      }
+      await paint();
+      const { lm } = runDetect(pose, canvas);
+      const issues = assessPhoto(lm, undefined, frame);
+      base = {
+        issues,
+        mode: "landmarks",
+        measures: hasBlockingIssue(issues) || !lm ? null : extractLandmarkMeasures(lm, frame, heightCm),
+      };
+      break;
     } catch (e) {
       const err = e instanceof PoseError ? e : new PoseError(`detect/${delegate}`, e);
       errors.push(err.message);
-      discard(delegate);
-      // A missing/corrupt model fails the same way on every delegate.
-      if (err.stage === "model") break;
+      discard(delegate, false);
+      if (err.stage === "model") break; // a missing/corrupt model fails the same way everywhere
     }
   }
-  throw new Error([...errors, ...(consoleTail.length ? ["--- console ---", ...consoleTail] : [])].join("\n"));
+  if (!base) throw new Error([...errors, ...(consoleTail.length ? ["--- console ---", ...consoleTail] : [])].join("\n"));
+  if (!base.measures || !maskEnabled()) return base;
+
+  // Phase 2: refine with the body silhouette. Failure here is non-fatal.
+  try {
+    onStage("silhouette");
+    setFlag("pending");
+    await paint();
+    const pose = await withTimeout(getLandmarker("CPU", true), START_TIMEOUT_MS.CPU, "engine-start/CPU+mask");
+    await paint();
+    const { lm, mask } = runDetect(pose, canvas);
+    if (!lm || !mask) throw new Error("no silhouette returned");
+    const issues = assessPhoto(lm, mask);
+    setFlag("ok");
+    if (hasBlockingIssue(issues)) return { issues, mode: "mask", measures: null };
+    return { issues, mode: "mask", measures: extractFrontalMeasures(lm, mask, heightCm) };
+  } catch (e) {
+    console.error("silhouette step failed; using landmarks only", e);
+    setFlag("off");
+    discard("CPU", true);
+    return base;
+  }
 }

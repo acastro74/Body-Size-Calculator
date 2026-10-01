@@ -57,9 +57,10 @@ async function fetchInfo(url: string) {
 }
 
 let cpu: PoseLandmarker | null = null;
+let cpuNoMask: PoseLandmarker | null = null;
 
-async function create(delegate: "CPU" | "GPU", model: ArrayBuffer, timeoutMs: number) {
-  log(`createFromOptions(${delegate}) starting…`);
+async function create(delegate: "CPU" | "GPU", model: ArrayBuffer, timeoutMs: number, masks = true) {
+  log(`createFromOptions(${delegate}, masks=${masks}) starting…`);
   await tick();
   const t = performance.now();
   const fileset = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
@@ -70,7 +71,7 @@ async function create(delegate: "CPU" | "GPU", model: ArrayBuffer, timeoutMs: nu
       baseOptions: { modelAssetBuffer: new Uint8Array(model), delegate },
       runningMode: "IMAGE",
       numPoses: 1,
-      outputSegmentationMasks: true,
+      outputSegmentationMasks: masks,
     }),
     timeoutMs,
     `createFromOptions(${delegate})`,
@@ -117,20 +118,29 @@ document.getElementById("photo")!.addEventListener("change", async (ev) => {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file) return;
   try {
-    if (!cpu) {
-      const model = await fetchInfo("/models/pose_landmarker_full.task");
-      if (!model) return;
-      cpu = await create("CPU", model, 30_000);
-    }
+    const model = await fetchInfo("/models/pose_landmarker_full.task");
+    if (!model) return;
     const bmp = await createImageBitmap(file);
     const scale = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
     const c = document.createElement("canvas");
     c.width = Math.round(bmp.width * scale);
     c.height = Math.round(bmp.height * scale);
     c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+
+    // 2a: landmarks only (no silhouette)
+    cpuNoMask ??= await create("CPU", model, 30_000, false);
+    log("--- 2a: landmarks only ---");
     await tick();
-    detect(cpu, c, file.name);
-    log("PHOTO TEST DONE");
+    detect(cpuNoMask, c, `${file.name} (no mask)`);
+    log("2a OK");
+
+    // 2b: with silhouette — this is the step that may freeze the tab
+    log("--- 2b: with silhouette (if the page freezes here, the silhouette step is the problem) ---");
+    await tick();
+    cpu ??= await create("CPU", model, 30_000, true);
+    await tick();
+    detect(cpu, c, `${file.name} (with mask)`);
+    log("2b OK — PHOTO TEST DONE");
   } catch (e) {
     log(`FAILED: ${e instanceof Error ? `${e.name}: ${e.message}` : e}`);
   }

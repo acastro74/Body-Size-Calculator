@@ -1,4 +1,4 @@
-import { chestMerged, geometry, LM, type Landmark, type Mask } from "./silhouette";
+import { chestMerged, geometry, geometryFromLandmarks, LM, type Frame, type Landmark, type Mask } from "./silhouette";
 
 export type PhotoIssueCode =
   | "no_person"
@@ -17,12 +17,15 @@ export interface PhotoIssue {
 const REQUIRED = [LM.nose, LM.lShoulder, LM.rShoulder, LM.lHip, LM.rHip, LM.lAnkle, LM.rAnkle, LM.lHeel, LM.rHeel];
 const VISIBLE = 0.5;
 
-/** Check that the photo is usable for estimation. Pure: operates on landmarks + mask. */
-export function assessPhoto(lm: Landmark[] | undefined, mask: Mask | undefined): PhotoIssue[] {
-  if (!lm || lm.length < 33 || !mask) return [{ code: "no_person", severity: "error" }];
+/**
+ * Check that the photo is usable for estimation. Pure: operates on landmarks and, when
+ * available, the silhouette mask. Without a mask, pass the image `frame` (landmark-only mode).
+ */
+export function assessPhoto(lm: Landmark[] | undefined, mask: Mask | undefined, frame?: Frame): PhotoIssue[] {
+  if (!lm || lm.length < 33 || (!mask && !frame)) return [{ code: "no_person", severity: "error" }];
 
   const issues: PhotoIssue[] = [];
-  const g = geometry(lm, mask);
+  const g = mask ? geometry(lm, mask) : geometryFromLandmarks(lm, frame!);
   const visible = REQUIRED.every((i) => (lm[i]?.visibility ?? 0) > VISIBLE);
   const inside = REQUIRED.every((i) => {
     const l = lm[i]!;
@@ -41,7 +44,7 @@ export function assessPhoto(lm: Landmark[] | undefined, mask: Mask | undefined):
   const tilt = Math.abs((ls.y - rs.y) * g.height) / Math.max(shoulderPx, 1);
   if (tilt > 0.15) issues.push({ code: "tilted", severity: "error" });
 
-  if (chestMerged(lm, mask)) issues.push({ code: "arms_close", severity: "warning" });
+  if (mask && chestMerged(lm, mask)) issues.push({ code: "arms_close", severity: "warning" });
   return issues;
 }
 

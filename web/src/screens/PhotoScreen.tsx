@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Profile } from "@bsc/shared";
 import { t, type Key, type Lang } from "../i18n";
-import { analyzePhoto, type PhotoAnalysis } from "../pose";
+import { analyzePhoto, type PhotoAnalysis, type Stage } from "../pose";
 import { hasBlockingIssue } from "../core/photoQuality";
 
 interface Props {
@@ -15,7 +15,7 @@ interface Props {
 
 export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNext }: Props) {
   const [busy, setBusy] = useState(false);
-  const [stage, setStage] = useState<"loading" | "analyzing">("loading");
+  const [stage, setStage] = useState<Stage>("loading");
   const [failed, setFailed] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -49,7 +49,7 @@ export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNex
         {t(lang, "chooseFile")}
       </button>
       {preview && <img className="preview" src={preview} alt="" />}
-      {busy && <p role="status">{t(lang, stage === "loading" ? "loadingEngine" : "analyzing")}</p>}
+      {busy && <p role="status">{t(lang, stage === "loading" ? "loadingEngine" : stage === "silhouette" ? "refining" : "analyzing")}</p>}
       {failed && (
         <div className="notice error" role="alert">
           {t(lang, "photoLoadError")}
@@ -66,6 +66,7 @@ export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNex
         </div>
       ))}
       {analysis && !hasBlockingIssue(analysis.issues) && analysis.issues.length === 0 && <p role="status">✅ {t(lang, "photoOk")}</p>}
+      {analysis?.measures && analysis.mode === "landmarks" && <div className="notice warn">{t(lang, "noMaskNote")}</div>}
       {analysis && !analysis.measures && !hasBlockingIssue(analysis.issues) && <div className="notice warn">{t(lang, "noPhotoMeasures")}</div>}
       <div className="actions">
         <button type="button" onClick={onBack}>{t(lang, "back")}</button>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { extractFrontalMeasures, LM, type Landmark, type Mask } from "../web/src/core/silhouette";
 import { assessPhoto } from "../web/src/core/photoQuality";
+import { extractLandmarkMeasures } from "../web/src/core/silhouette";
 
 const W = 600;
 const H = 1000;
@@ -131,5 +132,30 @@ describe("assessPhoto", () => {
     const { lm, mask } = synth({ armsAway: true });
     lm[LM.rShoulder] = { x: 400 / W, y: 260 / H, visibility: 1 };
     expect(assessPhoto(lm, mask).map((i) => i.code)).toContain("tilted");
+  });
+});
+
+describe("landmark-only mode (no silhouette)", () => {
+  it("measures scale, shoulders and arms from landmarks", () => {
+    const { lm } = synth({ armsAway: true });
+    // synthetic nose at y=100, heels at y=950 → body height ≈ 909 px for 175 cm
+    const m = extractLandmarkMeasures(lm, { width: W, height: H }, 175)!;
+    expect(m.shoulderWidthCm).toBeGreaterThan(34);
+    expect(m.shoulderWidthCm).toBeLessThan(42);
+    expect(m.chestWidthCm).toBeNull();
+    expect(m.armLengthCm).toBeGreaterThan(55);
+  });
+  it("still rejects a photo with the feet cut off", () => {
+    const { lm } = synth({ armsAway: true });
+    lm[LM.lHeel] = { x: 0.4, y: 1.02, visibility: 0.2 };
+    expect(assessPhoto(lm, undefined, { width: W, height: H })[0]?.code).toBe("not_full_body");
+  });
+  it("accepts a good frontal photo without a mask", () => {
+    const { lm } = synth({ armsAway: true });
+    expect(assessPhoto(lm, undefined, { width: W, height: H })).toEqual([]);
+  });
+  it("needs either a mask or a frame", () => {
+    const { lm } = synth({ armsAway: true });
+    expect(assessPhoto(lm, undefined)[0]?.code).toBe("no_person");
   });
 });

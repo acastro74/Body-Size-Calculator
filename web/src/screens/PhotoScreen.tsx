@@ -54,7 +54,7 @@ export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNex
           {t(lang, "photoLoadError")}
           <details>
             <summary>{t(lang, "technicalDetails")}</summary>
-            <code>{failed}</code> <br />
+            <pre style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{failed}</pre>
             <small>{navigator.userAgent}</small>
           </details>
         </div>

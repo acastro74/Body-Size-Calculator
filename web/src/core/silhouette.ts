@@ -98,6 +98,40 @@ export function armsAway(lm: Landmark[], g: Geometry): boolean {
   return side(LM.lWrist, LM.lElbow, LM.lHip) && side(LM.rWrist, LM.rElbow, LM.rHip);
 }
 
+/**
+ * x of an arm's centre line (shoulder→elbow→wrist) at image row `y`, or null if the row is
+ * outside the arm's vertical extent.
+ */
+function armCenterX(lm: Landmark[], g: Geometry, ids: [number, number, number], y: number): number | null {
+  const pts = ids.map((i) => lm[i]).filter((l): l is Landmark => !!l).map((l) => px(l, g.width, g.height));
+  if (pts.length < 3) return null;
+  // Extend past the wrist to cover the hand, which the pose model does not track as a joint.
+  const [elbow, wrist] = [pts[1]!, pts[2]!];
+  pts.push({ x: wrist.x + 0.45 * (wrist.x - elbow.x), y: wrist.y + 0.45 * (wrist.y - elbow.y) });
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    const [lo, hi] = a.y <= b.y ? [a, b] : [b, a];
+    if (y >= lo.y && y <= hi.y && hi.y > lo.y) return lo.x + ((hi.x - lo.x) * (y - lo.y)) / (hi.y - lo.y);
+  }
+  return null;
+}
+
+const ARM_L: [number, number, number] = [LM.lShoulder, LM.lElbow, LM.lWrist];
+const ARM_R: [number, number, number] = [LM.rShoulder, LM.rElbow, LM.rWrist];
+
+/**
+ * True when an arm's centre line lies inside the torso run on this row: the silhouette
+ * then includes the arm, so its width is not a torso width.
+ */
+export function armMergedAtRow(lm: Landmark[], g: Geometry, y: number, run: [number, number]): boolean {
+  const margin = 0.01 * g.bodyHeightPx;
+  return [ARM_L, ARM_R].some((ids) => {
+    const x = armCenterX(lm, g, ids, y);
+    return x != null && x > run[0] + margin && x < run[1] - margin;
+  });
+}
+
 const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.floor(s.length / 2)]!;
@@ -118,20 +152,17 @@ export function extractFrontalMeasures(lm: Landmark[], m: Mask, heightCm: number
   const torso = H.y - S.y;
   const cx = (S.x + H.x) / 2;
 
-  const widthAt = (y: number) => {
-    const r = runAt(m, y, cx);
-    return r ? (r[1] - r[0]) / scale : null;
-  };
+  /** Torso-only widths over a band of rows; rows where an arm merges with the torso are skipped. */
   const collect = (from: number, to: number, steps = 7) => {
     const out: number[] = [];
     for (let i = 0; i <= steps; i++) {
-      const w = widthAt(S.y + torso * (from + ((to - from) * i) / steps));
-      if (w != null) out.push(w);
+      const y = S.y + torso * (from + ((to - from) * i) / steps);
+      const r = runAt(m, y, cx);
+      if (r && !armMergedAtRow(lm, g, y, r)) out.push((r[1] - r[0]) / scale);
     }
     return out;
   };
 
-  const away = armsAway(lm, g);
   const chestW = collect(0.2, 0.3);
   const waistW = collect(0.5, 0.8);
   const hipW = collect(1.0, 1.15);
@@ -150,9 +181,29 @@ export function extractFrontalMeasures(lm: Landmark[], m: Mask, heightCm: number
 
   return {
     shoulderWidthCm: dist(px(ls, g.width, g.height), px(rs, g.width, g.height)) / scale,
-    chestWidthCm: away && chestW.length ? median(chestW) : null,
-    waistWidthCm: away && waistW.length ? Math.min(...waistW) : null,
-    hipWidthCm: away && hipW.length ? Math.max(...hipW) : null,
+    chestWidthCm: chestW.length ? median(chestW) : null,
+    waistWidthCm: waistW.length ? Math.min(...waistW) : null,
+    hipWidthCm: hipW.length ? Math.max(...hipW) : null,
     armLengthCm: arms.length ? arms.reduce((a, v) => a + v, 0) / arms.length : null,
   };
+}
+
+/** True when the arms merge with the torso silhouette across the whole chest band. */
+export function chestMerged(lm: Landmark[], m: Mask): boolean {
+  const g = geometry(lm, m);
+  const ls = lm[LM.lShoulder];
+  const rs = lm[LM.rShoulder];
+  const lh = lm[LM.lHip];
+  const rh = lm[LM.rHip];
+  if (!g || !ls || !rs || !lh || !rh) return false;
+  const S = mid(px(ls, g.width, g.height), px(rs, g.width, g.height));
+  const H = mid(px(lh, g.width, g.height), px(rh, g.width, g.height));
+  const cx = (S.x + H.x) / 2;
+  let clear = 0;
+  for (let i = 0; i <= 6; i++) {
+    const y = S.y + (H.y - S.y) * (0.2 + (0.1 * i) / 6);
+    const r = runAt(m, y, cx);
+    if (r && !armMergedAtRow(lm, g, y, r)) clear++;
+  }
+  return clear === 0;
 }

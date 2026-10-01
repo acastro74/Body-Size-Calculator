@@ -6,7 +6,7 @@ const W = 600;
 const H = 1000;
 
 /** Synthetic frontal person: 175 cm tall, 900 px from head top (y=50) to heels (y=950) → 5.143 px/cm. */
-function synth(opts: { armsAway: boolean }) {
+function synth(opts: { armsAway: boolean; armsClose?: boolean }) {
   const data = new Float32Array(W * H);
   const fill = (x0: number, x1: number, y: number) => {
     for (let x = Math.round(x0); x < Math.round(x1); x++) if (x >= 0 && x < W) data[y * W + x] = 1;
@@ -41,8 +41,8 @@ function synth(opts: { armsAway: boolean }) {
   };
   for (const s of [-1, 1]) {
     const sx = cx + s * 100;
-    const ex = cx + s * (opts.armsAway ? 150 : 60);
-    const wx = cx + s * (opts.armsAway ? 190 : 60);
+    const ex = cx + s * (opts.armsClose ? 105 : opts.armsAway ? 150 : 60);
+    const wx = cx + s * (opts.armsClose ? 150 : opts.armsAway ? 190 : 60);
     stroke(sx, 190, ex, 350, 15);
     stroke(ex, 350, wx, 480, 12);
   }
@@ -52,10 +52,10 @@ function synth(opts: { armsAway: boolean }) {
   set(LM.nose, 300, 100);
   set(LM.lShoulder, 200, 190);
   set(LM.rShoulder, 400, 190);
-  set(LM.lElbow, opts.armsAway ? 150 : 240, 350);
-  set(LM.rElbow, opts.armsAway ? 450 : 360, 350);
-  set(LM.lWrist, opts.armsAway ? 110 : 240, 480);
-  set(LM.rWrist, opts.armsAway ? 490 : 360, 480);
+  set(LM.lElbow, opts.armsClose ? 195 : opts.armsAway ? 150 : 240, 350);
+  set(LM.rElbow, opts.armsClose ? 405 : opts.armsAway ? 450 : 360, 350);
+  set(LM.lWrist, opts.armsClose ? 150 : opts.armsAway ? 110 : 240, 480);
+  set(LM.rWrist, opts.armsClose ? 450 : opts.armsAway ? 490 : 360, 480);
   set(LM.lHip, 245, 500);
   set(LM.rHip, 355, 500);
   set(LM.lAnkle, 250, 930);
@@ -87,6 +87,20 @@ describe("extractFrontalMeasures", () => {
     expect(m.chestWidthCm).toBeNull();
     expect(m.waistWidthCm).toBeNull();
     expect(m.shoulderWidthCm).not.toBeNull();
+  });
+});
+
+describe("arms hanging close to the torso (wrists away from hips, arms touching at the chest)", () => {
+  it("does not report arm-inflated chest/waist widths", () => {
+    const { lm, mask } = synth({ armsAway: true, armsClose: true });
+    const m = extractFrontalMeasures(lm, mask, 175)!;
+    // Real torso chest width is ~37 cm; with merged arms the silhouette would read far wider.
+    if (m.chestWidthCm != null) expect(m.chestWidthCm).toBeLessThan(40);
+    expect(m.chestWidthCm).toBeNull();
+  });
+  it("warns the user", () => {
+    const { lm, mask } = synth({ armsAway: true, armsClose: true });
+    expect(assessPhoto(lm, mask).map((i) => i.code)).toContain("arms_close");
   });
 });
 

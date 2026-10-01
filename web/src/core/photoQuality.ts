@@ -1,4 +1,4 @@
-import { armsAway, geometry, LM, type Landmark, type Mask } from "./silhouette";
+import { chestMerged, geometry, LM, type Landmark, type Mask } from "./silhouette";
 
 export type PhotoIssueCode =
   | "no_person"
@@ -41,7 +41,7 @@ export function assessPhoto(lm: Landmark[] | undefined, mask: Mask | undefined):
   const tilt = Math.abs((ls.y - rs.y) * g.height) / Math.max(shoulderPx, 1);
   if (tilt > 0.15) issues.push({ code: "tilted", severity: "error" });
 
-  if (!armsAway(lm, g)) issues.push({ code: "arms_close", severity: "warning" });
+  if (chestMerged(lm, mask)) issues.push({ code: "arms_close", severity: "warning" });
   return issues;
 }
 

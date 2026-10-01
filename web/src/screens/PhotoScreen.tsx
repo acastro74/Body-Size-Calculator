@@ -15,7 +15,7 @@ interface Props {
 
 export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNext }: Props) {
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
@@ -24,14 +24,14 @@ export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNex
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     setBusy(true);
-    setFailed(false);
+    setFailed(null);
     onAnalysis(null);
     setPreview(URL.createObjectURL(file));
     try {
       onAnalysis(await analyzePhoto(file, profile.heightCm));
     } catch (err) {
       console.error(err);
-      setFailed(true);
+      setFailed(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
     } finally {
       setBusy(false);
     }
@@ -49,7 +49,16 @@ export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNex
       </button>
       {preview && <img className="preview" src={preview} alt="" />}
       {busy && <p role="status">{t(lang, "analyzing")}</p>}
-      {failed && <div className="notice error" role="alert">{t(lang, "photoLoadError")}</div>}
+      {failed && (
+        <div className="notice error" role="alert">
+          {t(lang, "photoLoadError")}
+          <details>
+            <summary>{t(lang, "technicalDetails")}</summary>
+            <code>{failed}</code> <br />
+            <small>{navigator.userAgent}</small>
+          </details>
+        </div>
+      )}
       {analysis?.issues.map((i) => (
         <div key={i.code} className={`notice ${i.severity === "error" ? "error" : "warn"}`} role={i.severity === "error" ? "alert" : "status"}>
           {t(lang, `issue_${i.code}` as Key)}

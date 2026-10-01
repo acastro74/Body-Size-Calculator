@@ -22,6 +22,35 @@ function getLandmarker(): Promise<PoseLandmarker> {
   return landmarker;
 }
 
+/** Decode to a canvas with EXIF rotation applied, trying several browser-supported routes. */
+async function toCanvas(file: File): Promise<HTMLCanvasElement> {
+  const draw = (source: CanvasImageSource, w: number, h: number) => {
+    const scale = Math.min(1, MAX_SIDE / Math.max(w, h));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.getContext("2d")!.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  };
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const canvas = draw(bitmap, bitmap.width, bitmap.height);
+    bitmap.close();
+    return canvas;
+  } catch {
+    // Some browsers reject the options bag; <img> honours EXIF orientation by default.
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return draw(img, img.naturalWidth, img.naturalHeight);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
 export interface PhotoAnalysis {
   issues: PhotoIssue[];
   /** null when the photo was rejected */
@@ -30,13 +59,7 @@ export interface PhotoAnalysis {
 
 /** Runs entirely in the browser: the photo is never uploaded. */
 export async function analyzePhoto(file: File, heightCm: number): Promise<PhotoAnalysis> {
-  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-  const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
+  const canvas = await toCanvas(file);
 
   const pose = await getLandmarker();
   const result = pose.detect(canvas);

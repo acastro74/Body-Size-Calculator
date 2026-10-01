@@ -4,6 +4,17 @@ import { assessPhoto, hasBlockingIssue, type PhotoIssue } from "./core/photoQual
 import type { FrontalMeasures } from "./core/bodyEstimate";
 
 const MAX_SIDE = 1024;
+// The WASM runtime prints the real reason for an abort to the console; keep the latest lines for error reports.
+const consoleTail: string[] = [];
+for (const level of ["warn", "error"] as const) {
+  const orig = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    consoleTail.push(`${level}: ${args.map(String).join(" ").slice(0, 240)}`);
+    if (consoleTail.length > 8) consoleTail.shift();
+    orig(...args);
+  };
+}
+
 const MODEL_URL = "/models/pose_landmarker_full.task";
 const WASM_URL = "/mediapipe/wasm";
 const MIN_MODEL_BYTES = 5_000_000;
@@ -150,5 +161,5 @@ export async function analyzePhoto(
       if (err.stage === "model") break;
     }
   }
-  throw new Error(errors.join("\n"));
+  throw new Error([...errors, ...(consoleTail.length ? ["--- console ---", ...consoleTail] : [])].join("\n"));
 }

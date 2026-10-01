@@ -27,5 +27,6 @@ export default defineConfig({
       },
     }),
   ],
+  build: { rollupOptions: { input: { main: "index.html", diagnose: "diagnose.html" } } },
   server: { proxy: { "/api": "http://localhost:8787" } },
 });

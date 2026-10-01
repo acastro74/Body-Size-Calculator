@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pose engine diagnostics</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; max-width: 760px; margin: 16px auto; padding: 0 16px; }
+      pre { background: #111; color: #ddd; padding: 12px; border-radius: 8px; white-space: pre-wrap; min-height: 200px; }
+      button { font: inherit; padding: 8px 12px; margin: 4px 4px 4px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Pose engine diagnostics</h1>
+    <p>Runs each startup step separately with timings. If the page freezes, the last line shown is where it stopped.</p>
+    <button id="run">1. Run checks</button>
+    <label>2. Test a photo: <input id="photo" type="file" accept="image/*" /></label>
+    <button id="gpu">3. Test GPU engine (may hang)</button>
+    <button id="copy">Copy report</button>
+    <pre id="log"></pre>
+    <script type="module" src="/src/diagnose.ts"></script>
+  </body>
+</html>

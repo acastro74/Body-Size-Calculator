@@ -1,0 +1,12 @@
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "tests/e2e",
+  timeout: 60_000,
+  use: { baseURL: "http://localhost:5173", trace: "retain-on-failure" },
+  projects: [
+    { name: "mobile", use: { viewport: { width: 390, height: 844 } } },
+    { name: "desktop", use: { viewport: { width: 1280, height: 800 } } },
+  ],
+  webServer: { command: "npm run dev -w web", url: "http://localhost:5173", reuseExistingServer: true, timeout: 60_000 },
+});

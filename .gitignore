@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+*.log
+web/public/mediapipe
+web/public/models
+test-results
+playwright-report

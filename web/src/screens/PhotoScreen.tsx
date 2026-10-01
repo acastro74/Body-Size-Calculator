@@ -15,6 +15,7 @@ interface Props {
 
 export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNext }: Props) {
   const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<"loading" | "analyzing">("loading");
   const [failed, setFailed] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -28,7 +29,7 @@ export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNex
     onAnalysis(null);
     setPreview(URL.createObjectURL(file));
     try {
-      onAnalysis(await analyzePhoto(file, profile.heightCm));
+      onAnalysis(await analyzePhoto(file, profile.heightCm, setStage));
     } catch (err) {
       console.error(err);
       setFailed(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
@@ -48,7 +49,7 @@ export function PhotoScreen({ lang, profile, analysis, onAnalysis, onBack, onNex
         {t(lang, "chooseFile")}
       </button>
       {preview && <img className="preview" src={preview} alt="" />}
-      {busy && <p role="status">{t(lang, "analyzing")}</p>}
+      {busy && <p role="status">{t(lang, stage === "loading" ? "loadingEngine" : "analyzing")}</p>}
       {failed && (
         <div className="notice error" role="alert">
           {t(lang, "photoLoadError")}

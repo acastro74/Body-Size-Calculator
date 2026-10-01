@@ -16,6 +16,19 @@ export class PoseError extends Error {
   }
 }
 
+/** Starting the engine can hang on some GPU/browser setups; fail fast instead of spinning forever. */
+export const START_TIMEOUT_MS = { CPU: 30_000, GPU: 15_000 } as const;
+
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${Math.round(ms / 1000)}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).catch((e) => {
+    throw new PoseError(label, e);
+  }).finally(() => clearTimeout(timer));
+}
+
 type Delegate = "CPU" | "GPU";
 let cached: { delegate: Delegate; instance: Promise<PoseLandmarker> } | null = null;
 
@@ -102,14 +115,20 @@ export interface PhotoAnalysis {
 }
 
 /** Runs entirely in the browser: the photo is never uploaded. */
-export async function analyzePhoto(file: File, heightCm: number): Promise<PhotoAnalysis> {
+export async function analyzePhoto(
+  file: File,
+  heightCm: number,
+  onStage: (stage: "loading" | "analyzing") => void = () => {},
+): Promise<PhotoAnalysis> {
   const canvas = await toCanvas(file);
 
   // Try the CPU engine first, then the GPU one; the WASM runtime can abort on some browser/GPU setups.
   const errors: string[] = [];
   for (const delegate of ["CPU", "GPU"] as const) {
     try {
-      const pose = await getLandmarker(delegate);
+      onStage("loading");
+      const pose = await withTimeout(getLandmarker(delegate), START_TIMEOUT_MS[delegate], `engine-start/${delegate}`);
+      onStage("analyzing");
       const result = pose.detect(canvas);
       try {
         const lm = result.landmarks[0] as Landmark[] | undefined;
